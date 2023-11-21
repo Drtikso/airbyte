@@ -46,7 +46,7 @@ import org.slf4j.LoggerFactory;
 public class InitialSyncCtidIterator extends AbstractIterator<RowDataWithCtid> implements AutoCloseableIterator<RowDataWithCtid> {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(InitialSyncCtidIterator.class);
-  public static final int MAX_TUPLES_IN_QUERY = 5_000_000;
+  public static final int MAX_TUPLES_IN_QUERY = 500_000;
   private static final int MAX_QUERY_RETRIES = 3;
   private final AirbyteStreamNameNamespacePair airbyteStream;
   private final long blockSize;
@@ -322,6 +322,7 @@ public class InitialSyncCtidIterator extends AbstractIterator<RowDataWithCtid> i
                                                           final Ctid upperBound) {
     Preconditions.checkArgument(lowerBound != null, "Lower bound ctid expected");
     Preconditions.checkArgument(upperBound != null, "Upper bound ctid expected");
+    database.unsafeQuery()
     try {
       LOGGER.info("Preparing query for table: {}", tableName);
       final String fullTableName = getFullyQualifiedTableNameWithQuoting(schemaName, tableName,
