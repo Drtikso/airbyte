@@ -30,6 +30,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import javax.annotation.CheckForNull;
 import org.apache.commons.lang3.tuple.Pair;
@@ -46,6 +47,7 @@ public class InitialSyncCtidIterator extends AbstractIterator<RowDataWithCtid> i
 
   private static final Logger LOGGER = LoggerFactory.getLogger(InitialSyncCtidIterator.class);
   public static final int MAX_TUPLES_IN_QUERY = 5_000_000;
+  private static final int MAX_QUERY_RETRIES = 3;
   private final AirbyteStreamNameNamespacePair airbyteStream;
   private final long blockSize;
   private final List<String> columnNames;
@@ -62,6 +64,8 @@ public class InitialSyncCtidIterator extends AbstractIterator<RowDataWithCtid> i
   private final boolean useTestPageSize;
 
   private AutoCloseableIterator<RowDataWithCtid> currentIterator;
+  private Pair<Ctid, Ctid> currentSubQuery;
+  private AtomicInteger currentQueryRetries = new AtomicInteger(0);
   private Long lastKnownFileNode;
   private int numberOfTimesReSynced = 0;
   private boolean subQueriesInitialized = false;
@@ -128,21 +132,37 @@ public class InitialSyncCtidIterator extends AbstractIterator<RowDataWithCtid> i
           }
 
           if (currentIterator != null) {
-            currentIterator.close();
+            try{
+              currentIterator.close();
+            } catch (Exception e){
+            var retry = currentQueryRetries.incrementAndGet();
+              if(retry < MAX_QUERY_RETRIES){
+                LOGGER.warn("The current Iteration failed, retrying {}th try", retry, e);
+                currentIterator = AutoCloseableIterators.fromStream(getStream(currentSubQuery), airbyteStream);
+                continue;
+              } else {
+                  LOGGER.warn("Reached maximum iteration retries.", e);
+                  throw new RuntimeException(e);
+              }
+            }
+
           }
 
           if (subQueriesPlan.isEmpty()) {
             return endOfData();
           }
 
-          final Pair<Ctid, Ctid> p = subQueriesPlan.remove();
-          currentIterator = AutoCloseableIterators.fromStream(getStream(p), airbyteStream);
+          currentSubQuery = subQueriesPlan.remove();
+          currentIterator = AutoCloseableIterators.fromStream(getStream(currentSubQuery), airbyteStream);
+          currentQueryRetries.set(0);
         } while (!currentIterator.hasNext());
       }
 
       return currentIterator.next();
     } catch (final Exception e) {
       throw new RuntimeException(e);
+    } finally {
+        currentQueryRetries.set(0);
     }
   }
 
